@@ -18,7 +18,9 @@ dependencies = [
     "tqdm",
     "sympy",
     "jax[cuda12]",
-    "casadi"
+    "casadi",
+    "equinox",
+    "optax"
 ]
 
 [tool.setuptools.packages.find]
