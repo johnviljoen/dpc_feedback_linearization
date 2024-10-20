@@ -1,7 +1,14 @@
+import functools as ft
 import numpy as np
+import jax
+
+jax.config.update('jax_platform_name', 'cpu')
+
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+jax.config.update("jax_debug_nans", True)
 
 import os
 import sys
@@ -12,8 +19,8 @@ sys.path.append(os.path.join(here, '..'))
 
 import geometry
 
-from params import quad_params as qp, fl_params as fp
-from dynamics import f
+from params import quad_params as qp, ctrl_params as cp, sim_params as sp
+from dynamics import f_fl_patt_pr_step as f
 from plotting import Animator
 
 # Initialize state and reference
@@ -27,11 +34,15 @@ xk = jnp.array([
 ])
 rk = jnp.copy(xk)
 
-# Simulation parameters - Ts = 0.03 is maximum for stability here
-Ti, Tf, Ts = 0.0, 30.0, 0.001 # 30.0 s
-t = jnp.arange(Ti, Tf, Ts)
+t = jnp.arange(sp["Ti"], sp["Tf"], sp["Ts"])
 x = [jnp.copy(xk)]
 r = [jnp.copy(rk)]
+
+f = ft.partial(f, d=[0.]*3, qp=qp, cp=cp, Ts=sp["Ts"])
+
+p_d_fn = jax.jit(lambda tk: jnp.array([jnp.sin(tk), jnp.cos(tk), jnp.sin(2*tk)]))
+dp_d_fn = jax.jit(jax.jacobian(p_d_fn))
+ddp_d_fn = jax.jit(jax.jacobian(dp_d_fn))
 
 for tk in tqdm(t):
 
@@ -39,9 +50,14 @@ for tk in tqdm(t):
     # -------------------
 
     # pringle
-    p_d =   jnp.array([jnp.sin(tk), jnp.cos(tk), jnp.sin(2*tk)])
-    dp_d =  jnp.array([jnp.cos(tk), -jnp.sin(tk), 2*jnp.cos(2*tk)])
-    ddp_d = jnp.array([-jnp.sin(tk), -jnp.cos(tk), -4*jnp.sin(2*tk)])
+
+    p_d = p_d_fn(tk)
+    dp_d = dp_d_fn(tk)
+    ddp_d = ddp_d_fn(tk)
+
+    # p_d =   jnp.array([jnp.sin(tk), jnp.cos(tk), jnp.sin(2*tk)])
+    # dp_d =  jnp.array([jnp.cos(tk), -jnp.sin(tk), 2*jnp.cos(2*tk)])
+    # ddp_d = jnp.array([-jnp.sin(tk), -jnp.cos(tk), -4*jnp.sin(2*tk)])
 
     # cicular
     # p_d =   jnp.array([jnp.sin(tk), jnp.cos(tk), 0])
@@ -64,10 +80,10 @@ for tk in tqdm(t):
     # ddp_d = np.array([0,0,0])
 
     # step the system
-    xk = f(qp, fp, xk, uk, Ts=Ts)
+    xk = f(xk, uk)
 
     # Clip the rotor speeds within limits
-    xk = xk.at[13:17].set(jnp.clip(xk[13:17], qp["x_lb"][13:17], qp["x_ub"][13:17]))
+    # xk = xk.at[13:17].set(jnp.clip(xk[13:17], qp["x_lb"][13:17], qp["x_ub"][13:17]))
 
     # save
     # ----

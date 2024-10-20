@@ -42,11 +42,25 @@ quad_params["x_ub"] = np.array([
 ])
 
 
+# Fundamental Simulation Parameters
+sim_params = {
+    "Ti": 0.,
+    "Tf": 30.,
+    "Ts": 0.05 # 0.001, # 0.01, ~0.05 also works
+}
+
+
 # Fundamental Feedback Linearization Parameters (includes attitude control parameters)
-fl_params = {
+ctrl_params = {
     "Lambda": np.diag([1.0, 1.0, 1.0]),  # Tuning parameter for position error
     "K": np.diag([2.0, 2.0, 2.0]),       # Gain matrix for s
     "K_R": 1.0 * np.eye(3),              # Attitude control gain
     "K_omega": 0.1 * np.eye(3),          # Angular velocity control gain
+    "K_p_w": 0.001 / sim_params["Ts"] * 0.05, # Rotor proportional gain
+    "tilde_p_lb": np.array([-100.]*3),
+    "tilde_p_ub": np.array([100.]*3)
 }
+
+
+
 

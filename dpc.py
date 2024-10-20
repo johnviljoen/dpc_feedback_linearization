@@ -17,6 +17,7 @@ import stats
 import optax
 from typing import Callable, List
 from dataclasses import dataclass
+from eqx_utils import filter_scan
 
 from dynamics import f
 from models import StochasticActor
@@ -27,7 +28,7 @@ def sample_P_x0(n_envs, qp):
     q0 = Rotation.from_euler('xyz', euler0, degrees=False).as_quat()
     v0 = np.random.uniform(low=-1.0, high=1.0, size=[n_envs,3])
     omega0 = np.random.uniform(low=-np.pi/2, high=np.pi/2, size=[n_envs,3])
-    n0 = np.random.uniform(low=qp["minWmotor"], high=qp["maxWmotor"], size=[n_envs,3])
+    n0 = np.random.uniform(low=qp["minWmotor"], high=qp["maxWmotor"], size=[n_envs,4])
     pt_int0 = np.zeros([n_envs,3])
     x0 = np.hstack([p0,q0,v0,omega0,n0,pt_int0])
     return x0
@@ -66,7 +67,7 @@ def minibatch_step(key, actor, x0):
         return x_next, x  # Store state x for loss computation
     x_final, xs = jax.lax.scan(step_fn, x_t0, xs=None, length=bptt_hzn)
     
-        # Compute loss over the trajectory segment xs
+    # Compute loss over the trajectory segment xs
     loss = compute_loss(xs)
     
     # Compute gradients with respect to the actor's parameters
@@ -93,7 +94,7 @@ if __name__ == "__main__":
 
     # actor
     actor_key, key = jr.split(key)
-    actor = StochasticActor(actor_key, [nx, 32, 32, 32, 32, nu])
+    actor = StochasticActor(actor_key, [nx, 32, 32, 32, 32, int(nu*2)])
 
     # dynamics
     f = ft.partial(f, qp=qp, fp=fp)
@@ -108,32 +109,32 @@ if __name__ == "__main__":
     #
     x0 = sample_P_x0(n_envs, qp)
 
-    def minibatch_rollout(carry, xs, Q=5.0, R=0.1):
-        key, actor, x0 = carry
+    def loss(key, x0, actor, Q=5.0, R=0.1):
         _key, key = jr.split(key)
 
         def body(carry, xs):
-            key, actor, xk = carry
+            key, xk, idx, actor = carry
             _key, key = jr.split(key)
-            uk = actor(_key, xk)
-            xkp1 = f(xk, uk)
-            stage_loss = R * jnp.sum(uk**2) + Q * jnp.sum(xkp1**2)
-            # pg = barrier_loss
-            return (key, actor, xkp1), stage_loss
+            yk = xk # obs_rms.normalize(xk)
+            uk, _ = jax.vmap(actor)(jr.split(_key, n_envs), yk)
+            xkp1 = jax.vmap(f)(x=xk, u=uk)
+            stage_loss = R * jnp.sum(uk**2) + Q * jnp.sum(xkp1**2) # + penalty functions
+            idx += 1
 
-        (_, _, xk), stage_losses = jax.lax.scan(minibatch_rollout, (_key, actor, x0), length=n_mb)
-        mb_loss = stage_losses / n_mb
-        return mb_loss, jax.lax.stop_gradient(xk)
+            # decide on gradient truncation
+            trunc_grad_mask = idx % bptt_hzn
+            def branch_continue():
+                return xkp1
+            def branch_trunc_grad():
+                return jax.lax.stop_gradient(xkp1)
+            xkp1 = jax.lax.cond(trunc_grad_mask, branch_continue, branch_trunc_grad)
+            return (key, xkp1, idx, actor), stage_loss
 
-    def rollout(carry, xs):
+        (_, xN, _, _), stage_losses = filter_scan(body, (_key, x0, jnp.array(0), actor), [], length=unroll_len)
 
-        def body(carry, xs):
-            mb_loss, xk = minibatch_rollout(carry, xs)
-            grads 
+        print('fin')
 
-        grads = eqx.filter_value_and_grad("mb_loss w.r.t theta of actor")(actor)
-
-        xk
+    loss(key, x0, actor)
 
     # 
     mb_key, key = jr.split(key)
